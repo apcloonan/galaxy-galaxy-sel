@@ -32,6 +32,7 @@ import emcee
 
 # necessary utilities from scipy, astropy, and photutils
 from scipy.ndimage import maximum_filter
+from scipy.stats import multivariate_normal
 from astropy.stats import SigmaClip, gaussian_fwhm_to_sigma
 from astropy.convolution import Gaussian2DKernel
 from photutils.background import Background2D, StdBackgroundRMS
@@ -39,6 +40,7 @@ from photutils.segmentation import detect_sources, SegmentationImage, deblend_so
 
 # plots
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # -------------------------------
 
