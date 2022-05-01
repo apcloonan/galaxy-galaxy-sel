@@ -32,14 +32,10 @@ import emcee
 
 # necessary utilities from scipy, astropy, and photutils
 from scipy.ndimage import maximum_filter
-from astropy.stats import SigmaClip
+from astropy.stats import SigmaClip, gaussian_fwhm_to_sigma
 from astropy.convolution import Gaussian2DKernel
-from astropy.stats import gaussian_fwhm_to_sigma
-from photutils.background import Background2D
-from photutils.background import StdBackgroundRMS
-from photutils.segmentation import detect_sources
-from photutils.segmentation import SegmentationImage
-from photutils.segmentation import deblend_sources
+from photutils.background import Background2D, StdBackgroundRMS
+from photutils.segmentation import detect_sources, SegmentationImage, deblend_sources
 
 # plots
 import matplotlib.pyplot as plt
