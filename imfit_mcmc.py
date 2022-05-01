@@ -604,3 +604,5 @@ class SersicMCMC:
         self.profile_g = self.imfit_g.getModelImage(newParameters=final_params_g)
         
         self.plot_raw_profile_rr(height=height, width=width, num_r=num_r, num_g=num_g)
+        
+        
