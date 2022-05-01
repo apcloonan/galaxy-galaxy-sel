@@ -85,10 +85,10 @@ class SersicMCMC:
         
         self.psf_r, self.psf_g = self.construct_psfs()
         
-        img_gal_r, stds_r = self.get_img_uncertainties(self.img_r)
+        img_gal_r, stds_r = self.calc_err_and_gal(self.img_r)
         self.img_gal_r = img_gal_r; self.stds_r = stds_r
         
-        img_gal_g, stds_g = self.get_img_uncertainties(self.img_g)
+        img_gal_g, stds_g = self.calc_err_and_gal(self.img_g)
         self.img_gal_g = img_gal_g; self.stds_g = stds_g
         
         masked_img_gal_r, masked_img_gal_g = self.create_mask(box_size = box_size, dilation_factor=dilation_factor
@@ -125,13 +125,12 @@ class SersicMCMC:
         
         return psf_r, psf_g 
     
-    def get_img_uncertainties(self, img_i, num=1.0):
+    def calc_err_and_gal(self, img_i, num=1.0):
         '''
 
-        a function that estimates uncertainties in the pixel values of redmagic 
-        images, both from background and from the elliptical galaxy
+        calculates an intensity uncertainty map corresponding to the input image
     
-        also returns the grid of I_gal values, which is what the Sérsic model is fit to
+        also subtracts background and returns the grid of I_gal values, which is what the Sérsic model is fit to
     
         inputs:
         --------
