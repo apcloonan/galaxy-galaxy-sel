@@ -1,9 +1,8 @@
 
-### Fitting Sérsic brightness profile using MCMC random sampler
+### Photometric Analysis Toolkit for Galaxy-Galaxy Strong Lenses
 
 ### Aidan Cloonan
-
-### April 2022
+### Last Updated August 2022
 
 # -------------------------------
 
@@ -44,10 +43,28 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # -------------------------------
 
-class SersicMCMC:
+def fwhm2sigma(fwhm, arcsec_pix = 0.263   # arcsec per pixel, it's 0.263 for DECam
+              ):
+    '''
+    convert FWHM to a standard deviation for a Gaussian distribution
+    
+    This is meant for Gaussian light distributions (in our case, a rough PSF), so
+    the units are in arcseconds
+    
+    In the DES DR2 imaging catalogs, median PSF FWHMs are:
+        r-band --> 0.95 arcsec
+        g-band --> 1.11 arcsec
+    '''
+    fwhm_pix = fwhm / arcsec_pix
+    std = fwhm_pix / (2 * np.sqrt(2 * np.log(2)))
+    
+    return std
+
+class LensPhoto:
 
     def __init__(self, img_r, img_g, desid, std_psf_r, std_psf_g
                  , box_size = 10, dilation_factor=3, threshold_mult = 0.5, source_npix = 25       # masking parameters
+                 , half_light_radr = 8, half_light_radg = 6
                 ):
     
         self.img_r = img_r
@@ -67,7 +84,7 @@ class SersicMCMC:
         # bounds on posterior PDF sampling
         self.Ie_bounds = [1e-3, 300];
         self.r_bounds = [0.1, 30];
-        self.n_bounds = [0.2, 8];
+        self.n_bounds = [0.5, 8];
         self.x_bounds = [self.ncol/2 - 3, self.ncol/2 + 3];
         self.y_bounds = [self.nrow/2 - 3, self.nrow/2 + 3];
         self.e_bounds = [0, 1];
@@ -81,13 +98,22 @@ class SersicMCMC:
         self.emin, self.emax = self.e_bounds.copy();
         self.thmin, self.thmax = self.th_bounds.copy()
         
+        #self.Re_r = half_light_radr
+        #self.Re_g = half_light_radg
+        
         self.psf_r, self.psf_g = self.construct_psfs()
         
-        img_gal_r, stds_r = self.calc_err_and_gal(self.img_r)
-        self.img_gal_r = img_gal_r; self.stds_r = stds_r
+        img_gal_r, img_bg_r, stds_r, std_bg_r = self.calc_err_and_gal(self.img_r)
+        self.img_gal_r = img_gal_r; 
+        self.img_bg_r = img_bg_r; 
+        self.stds_r = stds_r; 
+        self.std_bg_r = std_bg_r
         
-        img_gal_g, stds_g = self.calc_err_and_gal(self.img_g)
-        self.img_gal_g = img_gal_g; self.stds_g = stds_g
+        img_gal_g, img_bg_g, stds_g, std_bg_g = self.calc_err_and_gal(self.img_g)
+        self.img_gal_g = img_gal_g;
+        self.img_bg_g = img_bg_g; 
+        self.stds_g = stds_g; 
+        self.std_bg_g = std_bg_g
         
         masked_img_gal_r, masked_img_gal_g = self.create_mask(box_size = box_size, dilation_factor=dilation_factor
                                                               , threshold_mult = threshold_mult, source_npix = source_npix
@@ -152,10 +178,12 @@ class SersicMCMC:
     
         ## I_bg and std_bg
     
-        img_bg = np.mean(bg_pixels)  # I_bg
+        img_bg = np.median(bg_pixels)  # I_bg
     
         bkgrms = StdBackgroundRMS(sigma_clip)
         std_bg = bkgrms(img_i) 
+        
+        #std_bg = np.std(bg_pixels)
     
         ## I_gal
     
@@ -171,8 +199,10 @@ class SersicMCMC:
         ## estimate uncertainties
 
         std_arr = np.sqrt(std_gal**2 + std_bg**2)
+        #std_arr = np.full_like(img_i, test_bg)
+        print(std_arr)
 
-        return img_gal, std_arr
+        return img_gal, img_bg, std_arr, std_bg
     
     def create_mask(self, box_size=10, dilation_factor=3, threshold_mult = 0.5, source_npix = 25):
         '''
@@ -225,10 +255,13 @@ class SersicMCMC:
         
         # get pixels from all other sources
         segm_dilated.keep_labels(other_inds)
+        
+        self.segm = segm_dilated.data
     
-        self.mask = (segm_dilated.data > 0)
+        self.mask = (self.segm > 0)
+        self.unmask = np.invert(self.mask)
 
-        # make values of those pixels 0 in both img_gal and uncertainties
+        # make values of those pixels 0 in img_gal
         gal_copy_g = self.img_gal_g.copy()
         gal_copy_g[self.mask] = 0
         gal_copy_r = self.img_gal_r.copy()
@@ -236,71 +269,88 @@ class SersicMCMC:
     
         return gal_copy_r, gal_copy_g
     
-    def quick_fit(self, npop=25):
+    def quick_fit(self):
         '''
         makes a quick fit using imfit, used to find initial vector for MCMC
         '''
         
         ### r-band
         
-        model_desc_r = pyimfit.SimpleModelDescription()
+        self.model_desc_r = pyimfit.SimpleModelDescription()
         
         # define the limits on the central-coordinate X0 and Y0 as +/-10 pixels relative to initial values
         # (note that Imfit treats image coordinates using the IRAF/Fortran numbering scheme: the lower-left
         # pixel in the image has coordinates (x,y) = (1,1))
-        model_desc_r.x0.setValue(self.nrow/2, self.x_bounds)
-        model_desc_r.y0.setValue(self.ncol/2, self.y_bounds)
+        self.model_desc_r.x0.setValue(self.nrow/2, self.x_bounds)
+        self.model_desc_r.y0.setValue(self.ncol/2, self.y_bounds)
 
         # create a Sersic image function, then define the parameter initial values and limits
         lrg_r = pyimfit.make_imfit_function("Sersic", label="LRG_r")
 
-        lrg_r.I_e.setValue(80, self.Ie_bounds)
+        lrg_r.I_e.setValue(15, self.Ie_bounds)
+        #lrg_r.r_e.setValue(self.Re_r, fixed=True)
         lrg_r.r_e.setValue(5, self.r_bounds)
-        lrg_r.n.setValue(1, self.n_bounds)
+        lrg_r.n.setValue(3, self.n_bounds)
 
         lrg_r.PA.setValue(40, self.th_bounds)
         lrg_r.ell.setValue(0.5, self.e_bounds)
         
-        model_desc_r.addFunction(lrg_r)
+        self.model_desc_r.addFunction(lrg_r)
         
-        self.imfit_r = pyimfit.Imfit(model_desc_r, psf=self.psf_r)
-        self.imfit_r.loadData(self.img_gal_r, error=self.stds_r, error_type="sigma")
+        self.imfit_r = pyimfit.Imfit(self.model_desc_r
+                                     , psf=self.psf_r)
+        
+        self.imfit_r.loadData(self.img_gal_r
+                              , error=self.stds_r
+                              , error_type="sigma"
+                              , mask=self.segm
+                             )
 
         results_r = self.imfit_r.doFit(getSummary=True)
         bestfit_r = results_r.params
+        errs_r = results_r.paramErrs
         
         ### g-band
         
-        model_desc_g = pyimfit.SimpleModelDescription()
+        self.model_desc_g = pyimfit.SimpleModelDescription()
         
         # define the limits on the central-coordinate X0 and Y0 as +/-10 pixels relative to initial values
         # (note that Imfit treats image coordinates using the IRAF/Fortran numbering scheme: the lower-left
         # pixel in the image has coordinates (x,y) = (1,1))
-        model_desc_g.x0.setValue(self.nrow/2, self.x_bounds)
-        model_desc_g.y0.setValue(self.ncol/2, self.y_bounds)
+        self.model_desc_g.x0.setValue(self.nrow/2, self.x_bounds)
+        self.model_desc_g.y0.setValue(self.ncol/2, self.y_bounds)
 
         # create a Sersic image function, then define the parameter initial values and limits
-        lrg_g = pyimfit.make_imfit_function("Sersic", label="LRG_r")
+        lrg_g = pyimfit.make_imfit_function("Sersic", label="LRG_g")
 
-        lrg_g.I_e.setValue(30, self.Ie_bounds)
+        lrg_g.I_e.setValue(10, self.Ie_bounds)
+        #lrg_g.r_e.setValue(self.Re_g, fixed=True)
         lrg_g.r_e.setValue(5, self.r_bounds)
         lrg_g.n.setValue(1, self.n_bounds)
 
         lrg_g.PA.setValue(40, self.th_bounds)
         lrg_g.ell.setValue(0.5, self.e_bounds)
         
-        model_desc_g.addFunction(lrg_g)
+        self.model_desc_g.addFunction(lrg_g)
         
-        self.imfit_g = pyimfit.Imfit(model_desc_g, self.psf_g)
-        self.imfit_g.loadData(self.img_gal_g, error=self.stds_g, error_type="sigma")
+        self.imfit_g = pyimfit.Imfit(self.model_desc_g
+                                     , self.psf_g
+                                    )
+        
+        self.imfit_g.loadData(self.img_gal_g
+                              , error=self.stds_g
+                              , error_type="sigma"
+                              , mask=self.segm
+                             )
 
         results_g = self.imfit_g.doFit(getSummary=True)
         bestfit_g = results_g.params
+        errs_g = results_g.paramErrs
         
-        print('r band:\n', results_r)
-        print('\ng band:\n', results_g)
+        #print('r band:\n', results_r)
+        #print('\ng band:\n', results_g)
     
-        return bestfit_r, bestfit_g
+        return bestfit_r, bestfit_g#, errs_r, errs_g
         
     def log_priors(self, v):
         '''
@@ -321,48 +371,55 @@ class SersicMCMC:
             lnprior = -np.inf
             
         return lnprior
-       
-    def log_likelihood(self, v):
-    
-        self.x0, self.y0, self.th, self.e, self.nr, self.rr, self.ng, self.rg = v
-    
-        ## initialize Sersic profiles
-        
-        # r-band
-        
-        new_params_r = np.array([self.x0, self.y0, self.th, self.e, self.nr, 1.0, self.rr])
-    
-        norm_profile_r = self.imfit_r.getModelImage(newParameters=new_params_r)
-        
-        # g-band
-        
-        new_params_g = np.array([self.x0, self.y0, self.th, self.e, self.ng, 1.0, self.rg])
-    
-        norm_profile_g = self.imfit_g.getModelImage(newParameters=new_params_g)
-    
-        ## find amplitudes, then multiply by I'
-        
-        # r-band
-        Ie_r = np.sum((norm_profile_r * (self.img_gal_r)) / (self.stds_r)**2) / np.sum((norm_profile_r)**2 / (self.stds_r)**2)
-    
-        profile_r = Ie_r * norm_profile_r
-        
-        # g-band
-        Ie_g = np.sum((norm_profile_g * (self.img_gal_g)) / (self.stds_g)**2) / np.sum((norm_profile_g)**2 / (self.stds_g)**2)
-    
-        profile_g = Ie_g * norm_profile_g
-    
-        # 1/sqrt(2.*pi) factor can be omitted from the likelihood because it does not depend on model parameters
-        # there are two terms for two bands
-        return np.sum(-0.5 * (np.log(self.stds_r**2) + (self.img_gal_r - profile_r)**2 / self.stds_r**2)) + np.sum(-0.5 * (np.log(self.stds_g**2) + (self.img_gal_g - profile_g)**2 / self.stds_g**2))
         
     def log_posterior(self, v):
     
-        # find values in prior and likelihood pdfs
+        ### find values in prior and likelihood pdfs
+        
+        ## prior
+        
         logprior = self.log_priors(v)
-        loglike = self.log_likelihood(v)
+        
+        ## likelihood
+        
+        self.x0, self.y0, self.th, self.e, self.nr, self.rr, self.ng, self.rg = v
+        
+        gal_filt_r = self.img_gal_r[self.unmask]
+        gal_filt_g = self.img_gal_g[self.unmask]
+        
+        stds_filt_r = self.stds_r[self.unmask]
+        stds_filt_g = self.stds_g[self.unmask]
+        
+        # r-band
+        new_params_r = np.array([self.x0, self.y0, self.th, self.e, self.nr, 1.0, self.rr])
+        norm_profile_r = self.imfit_r.getModelImage(newParameters=new_params_r)
+        norm_filt_r = norm_profile_r[self.unmask]
+        
+        # g-band
+        new_params_g = np.array([self.x0, self.y0, self.th, self.e, self.ng, 1.0, self.rg])
+        norm_profile_g = self.imfit_g.getModelImage(newParameters=new_params_g)
+        norm_filt_g = norm_profile_g[self.unmask]
     
-        logpost = logprior + loglike
+        # find amplitudes, then replace in parameter arrays
+        # r-band
+        Ie_r = np.sum((norm_filt_r * (gal_filt_r))
+                      / (stds_filt_r)**2) / np.sum((norm_filt_r)**2 
+                                                   / (stds_filt_r)**2)
+        new_params_r[-2] = Ie_r
+        
+        # g-band
+        Ie_g = np.sum((norm_filt_g * (gal_filt_g))
+                      / (stds_filt_g)**2) / np.sum((norm_filt_g)**2 
+                                                   / (stds_filt_g)**2)
+        new_params_g[-2] = Ie_g
+        
+        # calculate likelihood
+        loglike_r = -0.5 * self.imfit_r.computeFitStatistic(new_params_r)
+        loglike_g = -0.5 * self.imfit_g.computeFitStatistic(new_params_g)
+    
+        ## posterior distribution value
+        
+        logpost = logprior + loglike_r + loglike_g
     
         if np.isnan(logpost):
             logpost = -np.inf
@@ -456,12 +513,12 @@ class SersicMCMC:
         diff_img_g = (self.img_gal_g - self.profile_g) / self.stds_g
         diff_img_g[self.mask] = 0
     
-        fig, ax = plt.subplots(2,3)
+        fig, ax = plt.subplots(2,4)
         fig.set_figheight(height)
         fig.set_figwidth(width)
 
-        imgs = np.array([self.img_gal_r, self.profile_r, diff_img_r
-                         , self.img_gal_g, self.profile_g, diff_img_g])
+        imgs = np.array([self.img_r, self.img_gal_r, self.profile_r, diff_img_r
+                         , self.img_g, self.img_gal_g, self.profile_g, diff_img_g])
     
         imgs_min_r = np.min(imgs[:3], axis=(1,2))
         imgs_max_r = np.max(imgs[:3], axis=(1,2))
@@ -477,14 +534,15 @@ class SersicMCMC:
         cbar_lb_g = np.min(imgs_min_g[:2]) - num_g
         cbar_ub_g = np.max(imgs_max_g[:2])
 
-        ax[0, 0].set_title(r'$I_{\rm gal}$, DES ID: ' + self.desid
-                        , fontsize=18)
-        ax[0, 1].set_title(r'$I(\mathbf{v})$', fontsize=18)
-        ax[0, 2].set_title(r'$\left( I_{\rm gal} - I(\mathbf{v}) \right) / \sigma$', fontsize=18)
+        ax[0, 0].set_title(r'DES ID: ' + self.desid
+                        , fontsize=16)
+        ax[0, 1].set_title(r'$I_{\rm gal}$', fontsize=16)
+        ax[0, 2].set_title(r'$I(\mathbf{v})$', fontsize=16)
+        ax[0, 3].set_title(r'$\left( I_{\rm gal} - I(\mathbf{v}) \right) / \sigma$', fontsize=16)
     
         # r-band
         
-        for i, image in enumerate(imgs[:3]):
+        for i, image in enumerate(imgs[:4]):
             
             # Hide grid lines
             ax[0, i].grid(False)
@@ -493,7 +551,7 @@ class SersicMCMC:
             ax[0, i].set_xticks([])
             ax[0, i].set_yticks([])
     
-            if i == 2:
+            if i == 3:
                 im = ax[0, i].imshow(image, origin='lower', cmap='RdBu', interpolation='nearest'
                               , vmin=-5, vmax=5
                              )
@@ -515,7 +573,7 @@ class SersicMCMC:
          
         # g-band
         
-        for i, image in enumerate(imgs[3:]):
+        for i, image in enumerate(imgs[4:]):
             
             # Hide grid lines
             ax[1, i].grid(False)
@@ -524,7 +582,7 @@ class SersicMCMC:
             ax[1, i].set_xticks([])
             ax[1, i].set_yticks([])
     
-            if i == 2:
+            if i == 3:
                 im = ax[1, i].imshow(image, origin='lower', cmap='RdBu', interpolation='nearest'
                               , vmin=-5, vmax=5
                              )
@@ -545,6 +603,12 @@ class SersicMCMC:
                 #cbar.set_label(r'$g$-band brightness', rotation=270, labelpad=25, fontsize=16)
         
     def get_medians_calc_amplitude(self):
+        
+        gal_filt_r = self.img_gal_r[self.unmask]
+        gal_filt_g = self.img_gal_g[self.unmask]
+        
+        stds_filt_r = self.stds_r[self.unmask]
+        stds_filt_g = self.stds_g[self.unmask]
     
         self.medians = np.array([])
 
@@ -567,9 +631,13 @@ class SersicMCMC:
         new_params_r = np.array([x0i, y0i, thi, ei, nri, 1.0, rri])
     
         self.norm_profile_r = self.imfit_r.getModelImage(newParameters=new_params_r)
+        
+        norm_filt_r = self.norm_profile_r[self.unmask]
     
         # find amplitude
-        self.Ie_r = np.sum((self.norm_profile_r * self.img_gal_r) / (self.stds_r)**2) / np.sum((self.norm_profile_r)**2 / (self.stds_r)**2)
+        self.Ie_r = np.sum((norm_filt_r * gal_filt_r) 
+                           / (stds_filt_r)**2) / np.sum((norm_filt_r)**2 
+                                                        / (stds_filt_r)**2)
         
         # g-band
         
@@ -577,8 +645,12 @@ class SersicMCMC:
         
         self.norm_profile_g = self.imfit_g.getModelImage(newParameters=new_params_g)
     
+        norm_filt_g = self.norm_profile_g[self.unmask]
+    
         # find amplitude
-        self.Ie_g = np.sum((self.norm_profile_g * self.img_gal_g) / (self.stds_g)**2) / np.sum((self.norm_profile_g)**2 / (self.stds_g)**2)
+        self.Ie_g = np.sum((norm_filt_g * gal_filt_g) 
+                           / (stds_filt_g)**2) / np.sum((norm_filt_g)**2 
+                                                        / (stds_filt_g)**2)
     
         return np.append([self.Ie_r, self.Ie_g], self.medians) 
     
@@ -602,5 +674,7 @@ class SersicMCMC:
         self.profile_g = self.imfit_g.getModelImage(newParameters=final_params_g)
         
         self.plot_raw_profile_rr(height=height, width=width, num_r=num_r, num_g=num_g)
+        
+        return self.profile_r, self.profile_g
         
         
