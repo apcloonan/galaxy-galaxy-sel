@@ -50,6 +50,6 @@ def get_fits_files(path):
     '''
     files = np.array(os.listdir(path))
     finds = [i for i, f in enumerate(files) if '.fits' in f]
-    files = files[finds]
+    files = np.sort(files[finds])
     return np.core.defchararray.add(np.full(len(files), path), files)
     
