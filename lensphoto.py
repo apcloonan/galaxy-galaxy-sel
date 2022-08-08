@@ -6,6 +6,18 @@
 
 # -------------------------------
 
+### Next steps:
+
+#   implement magnitude (i.e. MAG_AUTO) measurements using SEP for every posterior PDF evaluation
+#             make the calculation in the posterior distribution, and append corresponding values to
+#             self.rmags or self.gmags array
+#             perform measurements on generated model images
+#             see this link for info on how to do this: https://sep.readthedocs.io/en/v1.1.x/apertures.html#equivalent-of-flux-auto-e-g-mag-auto-in-source-extractor
+
+#   set up a production run in a notebook which does MCMC modeling for a handful of systems
+
+# -------------------------------
+
 ### IMPORTS
 
 import os
