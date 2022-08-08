@@ -1,6 +1,6 @@
 ### Object Oriented Programming
 
-### Finding Sérsic distribution for DES redMaGiC elliptical galaxies
+### Finding Sérsic distribution for DES elliptical galaxies
 ### using MCMC random sampler
 
 ### by Aidan Cloonan
