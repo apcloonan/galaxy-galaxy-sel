@@ -10,7 +10,9 @@ June 2021 - Present
 * NumPy
 * SciPy
 * matplotlib
+* seaborn
 * Astropy
 * Photutils
 * Imfit
 * emcee
+* SEP (Source Extractor in Python)
