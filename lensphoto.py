@@ -14,7 +14,10 @@
 #             perform measurements on generated model images
 #             see this link for info on how to do this: https://sep.readthedocs.io/en/v1.1.x/apertures.html#equivalent-of-flux-auto-e-g-mag-auto-in-source-extractor
 
+#   in the object detection and masking algorithm, add an r-band component to the mask and then test
+
 #   set up a production run in a notebook which does MCMC modeling for a handful of systems
+#   find a way to compile the photometric redshift in the process
 
 # -------------------------------
 
