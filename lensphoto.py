@@ -9,8 +9,6 @@
 ### Next steps:
 
 #   implement magnitude (i.e. MAG_AUTO) measurements using SEP for every posterior PDF evaluation
-#             make the calculation in the posterior distribution, and append corresponding values to
-#             self.rmags or self.gmags array
 #             perform measurements on generated model images
 #             see this link for info on how to do this: https://sep.readthedocs.io/en/v1.1.x/apertures.html#equivalent-of-flux-auto-e-g-mag-auto-in-source-extractor
 
@@ -79,7 +77,7 @@ class LensPhoto:
 
     def __init__(self, img_r, img_g, desid, std_psf_r, std_psf_g
                  , box_size = 10, dilation_factor=3, threshold_mult = 0.5, source_npix = 25       # masking parameters
-                 , half_light_radr = 8, half_light_radg = 6
+                 , ndim=8, nwalkers=20, steps=600
                 ):
     
         self.img_r = img_r
@@ -113,9 +111,6 @@ class LensPhoto:
         self.emin, self.emax = self.e_bounds.copy();
         self.thmin, self.thmax = self.th_bounds.copy()
         
-        #self.Re_r = half_light_radr
-        #self.Re_g = half_light_radg
-        
         self.psf_r, self.psf_g = self.construct_psfs()
         
         img_gal_r, img_bg_r, stds_r, std_bg_r = self.calc_err_and_gal(self.img_r)
@@ -136,6 +131,10 @@ class LensPhoto:
         
         self.img_gal_r = masked_img_gal_r
         self.img_gal_g = masked_img_gal_g
+        
+        self.ndim = ndim
+        self.nwalkers = nwalkers
+        self.steps = steps
 
     def construct_psfs(self):
         '''
@@ -438,10 +437,12 @@ class LensPhoto:
     
         if np.isnan(logpost):
             logpost = -np.inf
+            
+        ## magnitude calculations
     
         return logpost
     
-    def mcmc_run(self, ndim=8, nwalkers=25, steps=1250):
+    def mcmc_run(self):
         
         fit_r, fit_g = self.quick_fit()
         
@@ -449,31 +450,31 @@ class LensPhoto:
         
         # initial vector
         # use np.random.normal instead, and center around min_v, small std
-        size = ndim * nwalkers
-        pr = np.random.normal(loc=0, scale=0.01, size=size).reshape((nwalkers, ndim)) + init_fit
-        sampler = emcee.EnsembleSampler(nwalkers, ndim, self.log_posterior)
+        size = self.ndim * self.nwalkers
+        pr = np.random.normal(loc=0, scale=0.01, size=size).reshape((self.nwalkers, self.ndim)) + init_fit
+        sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.log_posterior)
 
-        sampler.run_mcmc(pr, steps, progress=True)
+        sampler.run_mcmc(pr, self.steps, progress=True)
         
-        samples = sampler.get_chain()
+        chain = sampler.get_chain()
             
-        self.samples = samples
+        self.chain = chain
         
-        self.dist = self.samples[-300:]
+        self.dist = self.chain[-300:]
         
-        return self.samples, self.dist
+        return self.chain, self.dist
     
     def plot_trace(self, cutoff = 750, figsize=(5, 1)):
         
         try:
-            nsteps, ndims = np.shape(self.samples)[0], np.shape(self.samples)[2]
+            nsteps, ndims = np.shape(self.chain)[0], np.shape(self.chain)[2]
         except:
-            nsteps, ndims = np.shape(self.samples)[0], 1
+            nsteps, ndims = np.shape(self.chain)[0], 1
         
-        medians = np.median(self.samples, axis=1)
+        medians = np.median(self.chain, axis=1)
     
-        sig_lb = np.percentile(self.samples, 16, axis=1)
-        sig_ub = np.percentile(self.samples, 84, axis=1)
+        sig_lb = np.percentile(self.chain, 16, axis=1)
+        sig_ub = np.percentile(self.chain, 84, axis=1)
         
         for d in range(ndims):
         
@@ -691,5 +692,39 @@ class LensPhoto:
         self.plot_raw_profile_rr(height=height, width=width, num_r=num_r, num_g=num_g)
         
         return self.profile_r, self.profile_g
+    
+    def calc_mag_auto(self, model):
+        '''
+        takes a model galaxy image and calculates the galaxy's MAG_AUTO value
+        '''
         
+        objs = sep.extract(model, 3, err=0.)
+        x, y, a, b, theta = objs['x'], objs['y'], objs['a'], objs['b'], objs['theta']
+        
+        kronrad, krflag = sep.kron_radius(photo.profile_r, x, y, a, b, theta, 6.0)
+        rscale = 15 * kronrad
+
+        flux, fluxerr, flag = sep.sum_ellipse(photo.profile_r, x, y, a, b, theta, rscale,
+                                              subpix=1)
+        mag = -2.5*np.log10(flux) + 30
+        
+        return mag
+    
+    def mag_arrays(self):
+        '''
+        calculates MAG_AUTO value for each step in the sampled posterior distribution
+        '''
+        
+        self.rmag_arr = np.full(self.nwalkers * self.steps, 1.)
+        self.gmag_arr = np.full(self.nwalkers * self.steps, 1.)
+        
+        try:
+            samples = self.dist.reshape(-1, 8)
+        except:
+            raise NoSamplingError('Posterior distribution must be sampled first.')
+            
+# -------------------------------
+
+class NoSamplingError(Exception):
+    pass
         
