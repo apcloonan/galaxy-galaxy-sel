@@ -8,7 +8,7 @@
 
 ### Next steps:
 
-#   implement magnitude (i.e. MAG_AUTO) measurements using SEP for every posterior PDF evaluation
+#   (DONE) implement magnitude (i.e. MAG_AUTO) measurements using SEP for every posterior PDF evaluation
 #             perform measurements on generated model images
 #             see this link for info on how to do this: https://sep.readthedocs.io/en/v1.1.x/apertures.html#equivalent-of-flux-auto-e-g-mag-auto-in-source-extractor
 
@@ -29,6 +29,7 @@ import numpy as np
 
 # timing
 from timeit import default_timer
+from tqdm import tqdm
 
 # data structures from astropy
 import astropy.io.fits as fits
@@ -54,6 +55,9 @@ from photutils.segmentation import detect_sources, SegmentationImage, deblend_so
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+# SExtractor in Python
+import sep
+
 # -------------------------------
 
 def fwhm2sigma(fwhm, arcsec_pix = 0.263   # arcsec per pixel, it's 0.263 for DECam
@@ -77,7 +81,7 @@ class LensPhoto:
 
     def __init__(self, img_r, img_g, desid, std_psf_r, std_psf_g
                  , box_size = 10, dilation_factor=3, threshold_mult = 0.5, source_npix = 25       # masking parameters
-                 , ndim=8, nwalkers=20, steps=600
+                 , ndim=8, nwalkers=20, steps=600, burnin = 300
                 ):
     
         self.img_r = img_r
@@ -135,6 +139,10 @@ class LensPhoto:
         self.ndim = ndim
         self.nwalkers = nwalkers
         self.steps = steps
+        self.burnin = burnin
+        
+        if self.steps <= self.burnin:
+            raise NotEnoughStepsError('There should be more sampling steps than burn-in steps.')
 
     def construct_psfs(self):
         '''
@@ -385,6 +393,42 @@ class LensPhoto:
             lnprior = -np.inf
             
         return lnprior
+    
+    def norm_to_notnorm(self, v):
+        '''
+        takes a sample from the posterior and calculates non-normalized amplitude
+        '''
+        
+        x0, y0, th, e, nr, rr, ng, rg = v
+        
+        gal_filt_r = self.img_gal_r[self.unmask]
+        gal_filt_g = self.img_gal_g[self.unmask]
+        
+        stds_filt_r = self.stds_r[self.unmask]
+        stds_filt_g = self.stds_g[self.unmask]
+        
+        # r-band
+        norm_params_r = np.array([x0, y0, th, e, nr, 1.0, rr])
+        norm_profile_r = self.imfit_r.getModelImage(newParameters=norm_params_r)
+        norm_filt_r = norm_profile_r[self.unmask]
+        
+        # g-band
+        norm_params_g = np.array([x0, y0, th, e, ng, 1.0, rg])
+        norm_profile_g = self.imfit_g.getModelImage(newParameters=norm_params_g)
+        norm_filt_g = norm_profile_g[self.unmask]
+    
+        # find amplitudes, then replace in parameter arrays
+        # r-band
+        Ie_r = np.sum((norm_filt_r * (gal_filt_r))
+                      / (stds_filt_r)**2) / np.sum((norm_filt_r)**2 
+                                                   / (stds_filt_r)**2)
+        
+        # g-band
+        Ie_g = np.sum((norm_filt_g * (gal_filt_g))
+                      / (stds_filt_g)**2) / np.sum((norm_filt_g)**2 
+                                                   / (stds_filt_g)**2)
+        
+        return Ie_r, Ie_g
         
     def log_posterior(self, v):
     
@@ -397,35 +441,12 @@ class LensPhoto:
         ## likelihood
         
         self.x0, self.y0, self.th, self.e, self.nr, self.rr, self.ng, self.rg = v
-        
-        gal_filt_r = self.img_gal_r[self.unmask]
-        gal_filt_g = self.img_gal_g[self.unmask]
-        
-        stds_filt_r = self.stds_r[self.unmask]
-        stds_filt_g = self.stds_g[self.unmask]
-        
-        # r-band
-        new_params_r = np.array([self.x0, self.y0, self.th, self.e, self.nr, 1.0, self.rr])
-        norm_profile_r = self.imfit_r.getModelImage(newParameters=new_params_r)
-        norm_filt_r = norm_profile_r[self.unmask]
-        
-        # g-band
-        new_params_g = np.array([self.x0, self.y0, self.th, self.e, self.ng, 1.0, self.rg])
-        norm_profile_g = self.imfit_g.getModelImage(newParameters=new_params_g)
-        norm_filt_g = norm_profile_g[self.unmask]
     
-        # find amplitudes, then replace in parameter arrays
-        # r-band
-        Ie_r = np.sum((norm_filt_r * (gal_filt_r))
-                      / (stds_filt_r)**2) / np.sum((norm_filt_r)**2 
-                                                   / (stds_filt_r)**2)
-        new_params_r[-2] = Ie_r
-        
-        # g-band
-        Ie_g = np.sum((norm_filt_g * (gal_filt_g))
-                      / (stds_filt_g)**2) / np.sum((norm_filt_g)**2 
-                                                   / (stds_filt_g)**2)
-        new_params_g[-2] = Ie_g
+        # find amplitudes, then create parameter arrays
+        Ie_r, Ie_g = self.norm_to_notnorm(v)
+       
+        new_params_r = np.array([self.x0, self.y0, self.th, self.e, self.nr, Ie_r, self.rr])
+        new_params_g = np.array([self.x0, self.y0, self.th, self.e, self.ng, Ie_g, self.rg])
         
         # calculate likelihood
         loglike_r = -0.5 * self.imfit_r.computeFitStatistic(new_params_r)
@@ -460,7 +481,7 @@ class LensPhoto:
             
         self.chain = chain
         
-        self.dist = self.chain[-300:]
+        self.dist = self.chain[self.burnin:]
         
         return self.chain, self.dist
     
@@ -619,12 +640,6 @@ class LensPhoto:
                 #cbar.set_label(r'$g$-band brightness', rotation=270, labelpad=25, fontsize=16)
         
     def get_medians_calc_amplitude(self):
-        
-        gal_filt_r = self.img_gal_r[self.unmask]
-        gal_filt_g = self.img_gal_g[self.unmask]
-        
-        stds_filt_r = self.stds_r[self.unmask]
-        stds_filt_g = self.stds_g[self.unmask]
     
         self.medians = np.array([])
 
@@ -638,35 +653,8 @@ class LensPhoto:
     
             self.medians = np.append(self.medians, mid)
 
-        x0i, y0i, thi, ei, nri, rri, ngi, rgi = self.medians.copy()
-    
-        ## initialize Sersic profiles
-        
-        # r-band
-        
-        new_params_r = np.array([x0i, y0i, thi, ei, nri, 1.0, rri])
-    
-        self.norm_profile_r = self.imfit_r.getModelImage(newParameters=new_params_r)
-        
-        norm_filt_r = self.norm_profile_r[self.unmask]
-    
-        # find amplitude
-        self.Ie_r = np.sum((norm_filt_r * gal_filt_r) 
-                           / (stds_filt_r)**2) / np.sum((norm_filt_r)**2 
-                                                        / (stds_filt_r)**2)
-        
-        # g-band
-        
-        new_params_g = np.array([x0i, y0i, thi, ei, ngi, 1.0, rgi])
-        
-        self.norm_profile_g = self.imfit_g.getModelImage(newParameters=new_params_g)
-    
-        norm_filt_g = self.norm_profile_g[self.unmask]
-    
-        # find amplitude
-        self.Ie_g = np.sum((norm_filt_g * gal_filt_g) 
-                           / (stds_filt_g)**2) / np.sum((norm_filt_g)**2 
-                                                        / (stds_filt_g)**2)
+        # calculate amplitudes
+        self.Ie_r, self.Ie_g = self.norm_to_notnorm(v=self.medians.copy())
     
         return np.append([self.Ie_r, self.Ie_g], self.medians) 
     
@@ -701,13 +689,32 @@ class LensPhoto:
         objs = sep.extract(model, 3, err=0.)
         x, y, a, b, theta = objs['x'], objs['y'], objs['a'], objs['b'], objs['theta']
         
-        kronrad, krflag = sep.kron_radius(photo.profile_r, x, y, a, b, theta, 6.0)
+        kronrad, krflag = sep.kron_radius(model, x, y, a, b, theta, 6.0)
         rscale = 15 * kronrad
 
-        flux, fluxerr, flag = sep.sum_ellipse(photo.profile_r, x, y, a, b, theta, rscale,
+        flux, fluxerr, flag = sep.sum_ellipse(model, x, y, a, b, theta, rscale,
                                               subpix=1)
         mag = -2.5*np.log10(flux) + 30
+    
+        valid_inds = (np.isfinite(mag) #| np.isnan(mag)
+                     )
+    
+        # if there is more than one mag value and only one is a number, then take mag to be that number
+        # if there is more than one mag value and none are numbers, then take mag to be first index
+        # if there is more than one mag value and multiple are numbers, then take mag to be the largest number
+    
+        if (len(mag) > 1) and (len(mag[valid_inds]) == 1):
+            mag = mag[valid_inds]
         
+        elif (len(mag) > 1) and (len(mag[valid_inds]) > 1):
+            mag = mag[valid_inds]
+            max_ind = np.argmax(mag)
+        
+            mag = mag[max_ind]
+        
+        elif (len(mag) > 1) and (len(mag[valid_inds]) < 1):
+            mag = mag[0]
+    
         return mag
     
     def mag_arrays(self):
@@ -715,15 +722,56 @@ class LensPhoto:
         calculates MAG_AUTO value for each step in the sampled posterior distribution
         '''
         
-        self.rmag_arr = np.full(self.nwalkers * self.steps, 1.)
-        self.gmag_arr = np.full(self.nwalkers * self.steps, 1.)
+        self.rmag_arr = np.full(self.nwalkers * (self.steps - self.burnin), 1.)
+        self.gmag_arr = np.full(self.nwalkers * (self.steps - self.burnin), 1.)
         
         try:
             samples = self.dist.reshape(-1, 8)
+        
+            for ind, sample in tqdm(enumerate(samples)):
+            
+                x0, y0, th, e, nr, rr, ng, rg = sample
+            
+                Ie_r, Ie_g = self.norm_to_notnorm(sample)
+            
+                # r-band
+            
+                params_r = np.array([x0, y0, th, e, nr, Ie_r, rr])
+                profile_r = self.imfit_r.getModelImage(newParameters=params_r)
+            
+                mag_r = self.calc_mag_auto(profile_r)
+                self.rmag_arr[ind] = mag_r
+            
+                # g-band
+            
+                params_g = np.array([x0, y0, th, e, ng, Ie_g, rg])
+                profile_g = self.imfit_r.getModelImage(newParameters=params_g)
+            
+                mag_g = self.calc_mag_auto(profile_g)
+                self.gmag_arr[ind] = mag_g
+            
         except:
             raise NoSamplingError('Posterior distribution must be sampled first.')
+    
+        return self.rmag_arr, self.gmag_arr
             
 # -------------------------------
+
+### Next steps:
+
+#   (DONE) implement magnitude (i.e. MAG_AUTO) measurements using SEP for every posterior PDF evaluation
+#             perform measurements on generated model images
+#             see this link for info on how to do this: https://sep.readthedocs.io/en/v1.1.x/apertures.html#equivalent-of-flux-auto-e-g-mag-auto-in-source-extractor
+
+#   in the object detection and masking algorithm, add an r-band component to the mask and then test
+
+#   set up a production run in a notebook which does MCMC modeling for a handful of systems
+#   find a way to compile the photometric redshift in the process
+            
+# -------------------------------
+
+class NotEnoughStepsError(Exception):
+    pass
 
 class NoSamplingError(Exception):
     pass
