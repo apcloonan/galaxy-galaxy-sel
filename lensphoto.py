@@ -16,6 +16,7 @@
 
 #   set up a production run in a notebook which does MCMC modeling for a handful of systems
 #   find a way to compile the photometric redshift in the process
+#   sigma clip outliers in magnitudes just in case (they definitely will show up in g-band at least)
 
 # -------------------------------
 
@@ -767,6 +768,7 @@ class LensPhoto:
 
 #   set up a production run in a notebook which does MCMC modeling for a handful of systems
 #   find a way to compile the photometric redshift in the process
+#   sigma clip outliers in magnitudes just in case (they definitely will show up in g-band at least)
             
 # -------------------------------
 
