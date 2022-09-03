@@ -37,11 +37,17 @@ def read_fits_image(filename):
     reads and returns an image from a FITS file
     '''
     hdu = fits.open(filename)
-    data = hdu[0].data
-    header = hdu[0].header 
+    
+    # add object
+    #header = hdu[0].header
+    hdu[0].header['cand'] = filename[-34:-26] + filename[-19:-14]
+    
+    cand = hdu[0].header['cand']
+    
+    data = hdu[0].data 
     hdu.close()
     
-    return data
+    return cand, data
 
 def get_fits_files(path):
     '''
