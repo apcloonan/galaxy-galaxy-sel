@@ -236,8 +236,8 @@ class LensPhoto:
         '''
     
         # construct a background image w/ background noise
-        bkg_r = Background2D(self.img_r, box_size=10).background
-        bkg_g = Background2D(self.img_g, box_size=10).background
+        bkg_r = Background2D(self.img_r, box_size=box_size).background
+        bkg_g = Background2D(self.img_g, box_size=box_size).background
 
         # calculate RMS of each pixel, used to calculate threshold for source identification
         sigma_clip = SigmaClip(sigma=3.0, maxiters=10)
@@ -272,7 +272,7 @@ class LensPhoto:
         comb_segm = SegmentationImage(comb_segm_data)
 
         label = comb_segm.data[(comb_segm.data.shape[0]//2, comb_segm.data.shape[1]//2)]
-        label_loc = np.argwhere(comb_segm.labels == label)[0] - 1
+        label_loc = np.argwhere(comb_segm.labels == label)[0]
         other_inds = np.delete(comb_segm.labels, label_loc)
 
         source = (comb_segm.data == label)
