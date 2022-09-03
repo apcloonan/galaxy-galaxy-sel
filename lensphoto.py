@@ -2,7 +2,7 @@
 ### Photometric Analysis Toolkit for Galaxy-Galaxy Strong Lenses
 
 ### Aidan Cloonan
-### Last Updated August 2022
+### Last Updated September 2022
 
 # -------------------------------
 
@@ -12,9 +12,9 @@
 #             perform measurements on generated model images
 #             see this link for info on how to do this: https://sep.readthedocs.io/en/v1.1.x/apertures.html#equivalent-of-flux-auto-e-g-mag-auto-in-source-extractor
 
-#   in the object detection and masking algorithm, add an r-band component to the mask and then test
+#   (DONE) in the object detection and masking algorithm, add an r-band component to the mask and then test
 
-#   set up a production run in a notebook which does MCMC modeling for a handful of systems
+#   (DONE) set up a production run in a notebook which does MCMC modeling for a handful of systems
 #   find a way to compile the photometric redshift in the process
 #   sigma clip outliers in magnitudes just in case (they definitely will show up in g-band at least)
 
@@ -50,7 +50,7 @@ from scipy.stats import multivariate_normal
 from astropy.stats import SigmaClip, gaussian_fwhm_to_sigma
 from astropy.convolution import Gaussian2DKernel
 from photutils.background import Background2D, StdBackgroundRMS
-from photutils.segmentation import detect_sources, SegmentationImage, deblend_sources
+from photutils.segmentation import deblend_sources, SegmentationImage, detect_sources
 
 # plots
 import matplotlib.pyplot as plt
@@ -82,7 +82,7 @@ class LensPhoto:
 
     def __init__(self, img_r, img_g, desid, std_psf_r, std_psf_g
                  , box_size = 10, dilation_factor=3, threshold_mult = 0.5, source_npix = 25       # masking parameters
-                 , ndim=8, nwalkers=20, steps=600, burnin = 300
+                 , ndim=8, nwalkers=20, steps=500, burnin = 300
                 ):
     
         self.img_r = img_r
@@ -223,7 +223,7 @@ class LensPhoto:
 
         std_arr = np.sqrt(std_gal**2 + std_bg**2)
         #std_arr = np.full_like(img_i, test_bg)
-        print(std_arr)
+        #print(std_arr)
 
         return img_gal, img_bg, std_arr, std_bg
     
@@ -236,38 +236,53 @@ class LensPhoto:
         '''
     
         # construct a background image w/ background noise
-        bkg = Background2D(self.img_g, box_size=box_size)
-        bkg_img = bkg.background
-    
+        bkg_r = Background2D(self.img_r, box_size=10).background
+        bkg_g = Background2D(self.img_g, box_size=10).background
+
         # calculate RMS of each pixel, used to calculate threshold for source identification
         sigma_clip = SigmaClip(sigma=3.0, maxiters=10)
         bkgrms = StdBackgroundRMS(sigma_clip)
-        bkgrms_img = bkgrms(self.img_g) 
+
+        bkgrms_r = bkgrms(self.img_r) 
+        bkgrms_g = bkgrms(self.img_g)
 
         # map of thresholds over which sources are detected
-        threshold = bkg_img + (threshold_mult * bkgrms_img)  
-    
+        threshold_r = bkg_r + (0.5 * bkgrms_r)
+        threshold_g = bkg_g + (0.5 * bkgrms_g)
+
         # source detection
         sigma = 3.0 * gaussian_fwhm_to_sigma  # FWHM = 3.
         kernel = Gaussian2DKernel(sigma, x_size=3, y_size=3).normalize()
-        segm = detect_sources(self.img_g, threshold, source_npix, kernel)
+
+        segm_r = detect_sources(self.img_r, threshold_r, 25, kernel)
     
         # deblending sources, looking for saddles between peaks in flux
-        segm_deblend = deblend_sources(self.img_g, segm, npixels=5,
-                                       nlevels=32, contrast=0.001)
-                
-        label = segm_deblend.data[(segm_deblend.data.shape[0]//2, segm_deblend.data.shape[1]//2)]
-        other_inds = np.delete(np.arange(1, segm_deblend.nlabels+1), label-1)
+        segm_r = deblend_sources(self.img_r, segm_r, npixels=5,
+                                 nlevels=32, contrast=0.001)
+        
+        # source detection
+        segm_g = detect_sources(self.img_g, threshold_g, 25, kernel)
     
-        deblend_copy = segm_deblend.data.copy()
-        source = (deblend_copy == label)
+        # deblending sources, looking for saddles between peaks in flux
+        segm_g = deblend_sources(self.img_g, segm_g, npixels=5,
+                                 nlevels=32, contrast=0.001)
+        
+        comb_segm_data = segm_r.data + segm_g.data
+
+        comb_segm = SegmentationImage(comb_segm_data)
+
+        label = comb_segm.data[(comb_segm.data.shape[0]//2, comb_segm.data.shape[1]//2)]
+        label_loc = np.argwhere(comb_segm.labels == label)[0] - 1
+        other_inds = np.delete(comb_segm.labels, label_loc)
+
+        source = (comb_segm.data == label)
     
         # get pixels from all other sources
-        deblend_copy2 = segm_deblend.copy()
-        deblend_copy2.keep_labels(other_inds)
-
-        segm_dilated_arr = maximum_filter(deblend_copy2.data, dilation_factor)
-        segm_dilated_arr[deblend_copy2.data != 0] = deblend_copy2.data[deblend_copy2.data != 0]
+        deblend_copy = comb_segm.copy()
+        deblend_copy.keep_labels(other_inds)
+        
+        segm_dilated_arr = maximum_filter(deblend_copy.data, 3)
+        segm_dilated_arr[deblend_copy.data != 0] = deblend_copy.data[deblend_copy.data != 0]
         
         # label central source, which is the lens/galaxy
         segm_dilated_arr[source] = 10000
@@ -275,7 +290,7 @@ class LensPhoto:
         segm_dilated = SegmentationImage(segm_dilated_arr)
     
         other_inds = np.delete(segm_dilated.labels, -1)
-        
+
         # get pixels from all other sources
         segm_dilated.keep_labels(other_inds)
         
@@ -690,6 +705,9 @@ class LensPhoto:
         objs = sep.extract(model, 3, err=0.)
         x, y, a, b, theta = objs['x'], objs['y'], objs['a'], objs['b'], objs['theta']
         
+        invalid_aper = (np.abs(theta) > np.pi/2)
+        theta[invalid_aper] = theta[invalid_aper] - np.pi
+        
         kronrad, krflag = sep.kron_radius(model, x, y, a, b, theta, 6.0)
         rscale = 15 * kronrad
 
@@ -754,6 +772,8 @@ class LensPhoto:
         except:
             raise NoSamplingError('Posterior distribution must be sampled first.')
     
+        self.gr_arr = self.gmag_arr - self.rmag_arr
+        
         return self.rmag_arr, self.gmag_arr
             
 # -------------------------------
