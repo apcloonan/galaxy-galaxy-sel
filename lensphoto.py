@@ -15,8 +15,8 @@
 #   (DONE) in the object detection and masking algorithm, add an r-band component to the mask and then test
 
 #   (DONE) set up a production run in a notebook which does MCMC modeling for a handful of systems
-#   find a way to compile the photometric redshift in the process
-#   sigma clip outliers in magnitudes just in case (they definitely will show up in g-band at least)
+#   (DONE) find a way to compile the photometric redshift in the process
+#   (MAY NOT BE NECESSARY) sigma clip outliers in magnitudes just in case (they definitely will show up in g-band at least)
 
 # -------------------------------
 
