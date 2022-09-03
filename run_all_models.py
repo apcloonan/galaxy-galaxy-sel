@@ -13,7 +13,6 @@ import numpy as np
 
 import os
 import sys
-print(sys.version)
 
 # timing
 from timeit import default_timer
@@ -58,6 +57,8 @@ warnings.filterwarnings("ignore")
 
 # -------------------------------
 
+# program inputs: FITS files storing images, the location and filename to save results to
+
 path = '/Users/aidan/Desktop/sl_project/production/'
 
 hdulist_r = fits.open(path + 'lens_images_r.fits')
@@ -71,6 +72,10 @@ fwhm_g = 1.11
 std_psf_r = fwhm2sigma(fwhm_r)
 std_psf_g = fwhm2sigma(fwhm_g)
 
+# -------------------------------
+
+# to help keep the incoming mess of lists slightly less cluttered
+
 def add_results_onto_columns(sample_arr, l16, l50, l84):
     
     l16.append(np.percentile(sample_arr, 16))
@@ -78,6 +83,10 @@ def add_results_onto_columns(sample_arr, l16, l50, l84):
     l84.append(np.percentile(sample_arr, 84))
     
     return l16, l50, l84
+
+# -------------------------------
+
+# initializations
 
 desids = []
 photozs = []
@@ -111,8 +120,9 @@ gr16 = []
 gr50 = []
 gr84 = []
 
-# START
-# --------------
+# -------------------------------
+
+# begin
 
 for ind in np.arange(len(hdulist_r)):
 
@@ -154,7 +164,9 @@ for ind in np.arange(len(hdulist_r)):
     gmag16, gmag50, gmag84 = add_results_onto_columns(photo.gmag_arr, gmag16, gmag50, gmag84)
     gr16, gr50, gr84 = add_results_onto_columns(photo.gr_arr, gr16, gr50, gr84)
 
-# -------------
+# -------------------------------
+
+# construct resulting dataframe and save it
 
 data = {'cand_name': desids,
         'photo_z': photozs,
