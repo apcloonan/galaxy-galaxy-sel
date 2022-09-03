@@ -11,6 +11,7 @@ June 2021 - Present
 * SciPy
 * matplotlib
 * seaborn
+* pandas
 * Astropy
 * Photutils
 * Imfit
