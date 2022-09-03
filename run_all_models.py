@@ -61,10 +61,19 @@ warnings.filterwarnings("ignore")
 
 path = '/Users/aidan/Desktop/sl_project/production/'
 
-hdulist_r = fits.open(path + 'lens_images_r.fits')
-hdulist_g = fits.open(path + 'lens_images_g.fits')
+filename_r = path + 'lens_images_r.fits'
+filename_g = path + 'lens_images_g.fits'
+
+hdulist_r = fits.open(filename_r)
+hdulist_g = fits.open(filename_g)
 
 results_filename = path + 'lens_results.csv'
+
+print('\n--------------------------------------------------------\n\nModeling Surface Brightness of Luminous Red Galaxies')
+print('\nInput r-band FITS file is\n{}'.format(filename_r))
+print('\nInput g-band FITS file is\n{}'.format(filename_g))
+
+print('\nResults will be saved to\n{}\n'.format(results_filename))
 
 fwhm_r = 0.95
 fwhm_g = 1.11
@@ -136,7 +145,7 @@ for ind in np.arange(len(hdulist_r)):
     
     assert (desid == hdulist_g[ind].header['cand'])
     
-    print('--------------------------------------------\n\nNow modeling galaxy {} (index {})\n\n--------------------------------------------'.format(desid, ind))
+    print('--------------------------------------------\n\nNow modeling galaxy {} (index {})\n'.format(desid, ind))
 
     desids.append(desid)
     photozs.append(photoz)
@@ -212,4 +221,6 @@ data = {'cand_name': desids,
 results = pd.DataFrame(data)
 
 results.to_csv(results_filename)
+
+print('\n--------------------------------------------------------\n')
 
