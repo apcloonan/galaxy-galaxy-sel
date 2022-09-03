@@ -163,6 +163,16 @@ for ind in np.arange(len(hdulist_r)):
     rmag16, rmag50, rmag84 = add_results_onto_columns(photo.rmag_arr, rmag16, rmag50, rmag84)
     gmag16, gmag50, gmag84 = add_results_onto_columns(photo.gmag_arr, gmag16, gmag50, gmag84)
     gr16, gr50, gr84 = add_results_onto_columns(photo.gr_arr, gr16, gr50, gr84)
+    
+    print('\nBest fit results (medians) for {}:\n'.format(desid))
+    print('r-band mag = {}'.format(rmag50[-1]))
+    print('g-band mag = {}'.format(gmag50[-1]))
+    print('g-r color = {}'.format(gr50[-1]))
+    print('n_r = {}'.format(nr50[-1]))
+    print('R_eff,r = {}'.format(rr50[-1]))
+    print('n_g = {}'.format(ng50[-1]))
+    print('R_eff,g = {}'.format(rg50[-1]))
+    print('ellipticity = {}\n'.format(e50[-1]))
 
 # -------------------------------
 
